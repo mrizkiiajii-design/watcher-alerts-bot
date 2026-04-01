@@ -6,7 +6,9 @@ const {
   ButtonBuilder,
   ButtonStyle
 } = require("discord.js");
-const axios = require("axios");
+const Parser = require("rss-parser");
+
+const parser = new Parser();
 
 const TOKEN = process.env.TOKEN || process.env.DISCORD_TOKEN;
 const CHANNEL_ID = process.env.CHANNEL_ID;
@@ -18,38 +20,28 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-let lastTweetId = null;
+let lastPostLink = null;
 
 async function getTweet() {
   try {
-    const res = await axios.get(
-      "https://cdn.syndication.twimg.com/timeline/profile?screen_name=WatcherGuru",
-      {
-        headers: {
-          "User-Agent": "Mozilla/5.0"
-        }
-      }
-    );
+    const feed = await parser.parseURL("https://nitter.net/WatcherGuru/rss");
 
-    const tweets = res.data?.globalObjects?.tweets;
-    if (!tweets) {
-      console.log("Tweet data kosong");
+    const latest = feed.items?.[0];
+    if (!latest) {
+      console.log("RSS kosong");
       return;
     }
 
-    const latest = Object.values(tweets)[0];
-    if (!latest) return;
-
-    if (latest.id_str === lastTweetId) return;
-    lastTweetId = latest.id_str;
+    if (latest.link === lastPostLink) return;
+    lastPostLink = latest.link;
 
     await sendToDiscord(latest);
   } catch (err) {
-    console.error("getTweet error:", err?.response?.data || err?.message || err);
+    console.error("RSS error:", err?.message || err);
   }
 }
 
-async function sendToDiscord(tweet) {
+async function sendToDiscord(item) {
   try {
     const channel = await client.channels.fetch(CHANNEL_ID);
 
@@ -61,7 +53,8 @@ async function sendToDiscord(tweet) {
       throw new Error("Channel bukan text channel");
     }
 
-    const url = `https://twitter.com/WatcherGuru/status/${tweet.id_str}`;
+    const url = item.link;
+    const text = item.contentSnippet || item.content || item.title || "New post";
 
     const embed = new EmbedBuilder()
       .setColor(0x00bfff)
@@ -69,12 +62,9 @@ async function sendToDiscord(tweet) {
         name: "Watcher.Guru (@WatcherGuru)",
         iconURL: "https://pbs.twimg.com/profile_images/1593637000000000000/logo.jpg"
       })
-      .setDescription(tweet.full_text || tweet.text || "New post")
-      .setFooter({ text: "X • Live" });
-
-    if (tweet.entities?.media?.[0]?.media_url_https) {
-      embed.setImage(tweet.entities.media[0].media_url_https);
-    }
+      .setDescription(text)
+      .setFooter({ text: "X • RSS Live" })
+      .setURL(url);
 
     const button = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
@@ -89,9 +79,9 @@ async function sendToDiscord(tweet) {
       components: [button]
     });
 
-    console.log("Pesan berhasil dikirim");
+    console.log("Pesan berhasil dikirim:", url);
   } catch (err) {
-    console.error("sendToDiscord error:", err?.rawError || err?.response?.data || err?.message || err);
+    console.error("sendToDiscord error:", err?.rawError || err?.message || err);
   }
 }
 
@@ -109,11 +99,12 @@ client.once("ready", async () => {
       throw new Error("Channel startup bukan text channel");
     }
 
-    await channel.send("🚀 BOT SIAP!");
+    await channel.send("🚀 BOT SIAP! (RSS mode)");
 
-    setInterval(getTweet, 10000);
+    await getTweet();
+    setInterval(getTweet, 30000);
   } catch (err) {
-    console.error("ready error:", err?.rawError || err?.response?.data || err?.message || err);
+    console.error("ready error:", err?.rawError || err?.message || err);
   }
 });
 
